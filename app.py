@@ -130,7 +130,7 @@ def translate_to_hank(korean_text):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         system_prompt = """
         Your name is "Chief Hank". You are a veteran 'Production Superintendent' with over 30 years of experience 
@@ -180,3 +180,4 @@ if st.button("Chief Hank에게 전달하기"):
 # Footer
 st.markdown("---")
 st.caption("© 2024 Southern Industrial Solutions | Focused on Quality & Safety")
+
