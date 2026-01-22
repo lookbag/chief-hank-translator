@@ -45,53 +45,24 @@ st.markdown("""
         box-shadow: 0 10px 25px rgba(0,0,0,0.05);
         border: 1px solid #eee;
         margin-top: 2rem;
+        white-space: pre-wrap;
     }
     
-    .foreman-title {
-        color: #d97706;
-        font-weight: 700;
-        font-size: 1.2rem;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    .instruction-text {
-        font-size: 1.25rem;
-        line-height: 1.6;
-        color: #1f2937;
-        font-style: italic;
-        padding: 1rem;
-        border-left: 4px solid #d97706;
-        background: #fffcf0;
-    }
-    
-    .key-point-card {
-        background: #fdf2f2;
-        border: 1px solid #fecaca;
-        padding: 1rem;
-        border-radius: 8px;
-        margin-top: 1.5rem;
-    }
-    
-    .key-point-title {
-        color: #dc2626;
-        font-weight: 700;
-        font-size: 0.9rem;
-        text-transform: uppercase;
-        margin-bottom: 0.5rem;
-    }
-
-    /* Input area styling */
     .stTextArea textarea {
         border-radius: 10px;
         border: 2px solid #e5e7eb;
     }
+
+    .stTextArea label {
+        color: #1a1a1a !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        margin-bottom: 0.5rem !important;
+    }
     
     .stTextArea textarea:focus {
-        border-color: #d97706;
-        box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.2);
+        border-color: #d97706 !important;
+        box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.2) !important;
     }
     
     .stButton button {
@@ -109,14 +80,48 @@ st.markdown("""
         background-color: #b45309;
         transform: translateY(-1px);
     }
+
+    /* Sidebar info style */
+    .sidebar-info {
+        background: #f1f5f9;
+        padding: 1rem;
+        border-radius: 8px;
+        font-size: 0.9rem;
+        color: #475569;
+        border: 1px solid #e2e8f0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- Sidebar: API Key ---
-with st.sidebar:
-    st.title("⚙️ Settings")
-    api_key = st.text_input("Gemini API Key", type="password", help="Enter your Google Gemini API Key here.")
-    st.info("이 앱은 'Chief Hank'라는 남부 베테랑 감독관 페르소나를 사용하여 한국어 생산 지시를 현지 영어로 번역합니다.")
+# --- Logic: Get API Key Securely ---
+# Streamlit Cloud 실배포 시에는 Settings > Secrets에 저장된 키를 우선 사용합니다.
+api_key = None
+
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+else:
+    # 로컬 개발 환경용 영구 저장 로직
+    def save_key_to_local(key):
+        try:
+            os.makedirs(".streamlit", exist_ok=True)
+            with open(".streamlit/secrets.toml", "w", encoding="utf-8") as f:
+                f.write(f'GOOGLE_API_KEY = "{key}"')
+            return True
+        except Exception as e:
+            st.error(f"키 저장 실패: {e}")
+            return False
+
+    with st.sidebar:
+        st.title("⚙️ Settings")
+        input_key = st.text_input("Gemini API Key", type="password", help="Streamlit Cloud 배포 설정에서 키를 등록하면 이 창이 나타나지 않습니다.")
+        if input_key:
+            if st.button("내 컴퓨터에 영구 저장"):
+                if save_key_to_local(input_key):
+                    st.success("API Key가 저장되었습니다! 새로고침 해주세요.")
+                    st.rerun()
+            api_key = input_key
+        else:
+            st.info("💡 배포 팁: Cloud 설정의 Secrets에 'GOOGLE_API_KEY'를 등록하면 모든 사용자가 키 없이 이용할 수 있습니다.")
 
 # --- App Layout ---
 st.markdown('<h1 class="main-header">Chief Hank\'s Foreman Desk</h1>', unsafe_allow_html=True)
@@ -125,12 +130,13 @@ st.markdown('<p class="sub-header">30-year Veteran Production Superintendent fro
 # --- Logic: Translation ---
 def translate_to_hank(korean_text):
     if not api_key:
-        st.error("Please enter your Gemini API Key in the sidebar.")
+        st.error("API Key가 없습니다. 배포 환경의 Secrets에 등록하거나 사이드바에서 입력해주세요.")
         return None
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        # 최신 1.5 Pro 모델 사용
+        model = genai.GenerativeModel('gemini-1.5-pro')
         
         system_prompt = """
         Your name is "Chief Hank". You are a veteran 'Production Superintendent' with over 30 years of experience 
@@ -140,7 +146,7 @@ def translate_to_hank(korean_text):
         Translate Korean production plans into 'Southern US English Work Instructions' for local US workers.
         
         Tone & Style:
-        1. Professional yet warm: Use colloquialisms and politeness typical of the South.
+        1. Professional yet warm: Use colloquialisms and politeness typical of the South (e.g., "mighty fine", "reckon").
         2. Southern Nuance: Use "Y'all" or "Folks" instead of "Everyone/Guys". 
            Use indirect commands like "I need y'all to go ahead and handle this..." instead of blunt "Do this".
            Maintain mutual respect with "Please" or "Thank you".
@@ -161,18 +167,26 @@ def translate_to_hank(korean_text):
         response = model.generate_content(f"{system_prompt}\n\nInput: {korean_text}")
         return response.text
     except Exception as e:
-        st.error(f"Error: {e}")
+        # Fallback to flash if pro is unavailable
+        if "404" in str(e) or "quota" in str(e).lower():
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                response = model.generate_content(f"{system_prompt}\n\nInput: {korean_text}")
+                return response.text
+            except Exception as e2:
+                st.error(f"Error: {e2}")
+        else:
+            st.error(f"Error: {e}")
         return None
 
 # --- UI: Input & Output ---
-korean_input = st.text_area("한국어 생산 계획 입력", placeholder="예: 오늘 2라인 A교대 근무자들은 안전 장구 착용 확인하고, 오후 3시까지 할당량 500개 마무리하세요. 불량률 1% 넘지 않게 주의하세요.", height=150)
+korean_input = st.text_area("한국어 생산 계획 입력", placeholder="예: 오늘 2라인 A교대 근무자들은 안전 장구 착용 확인하고, 오후 3시까지 할당량 500개 마무리하세요.", height=150)
 
 if st.button("Chief Hank에게 전달하기"):
     if korean_input:
         with st.spinner("Hank가 담배 한 대 태우고 지시서 작성하는 중..."):
             result = translate_to_hank(korean_input)
             if result:
-                # Basic parsing if needed, but Gemini usually follows the format
                 st.markdown(f'<div class="output-card">{result}</div>', unsafe_allow_html=True)
     else:
         st.warning("내용을 입력해주세요.")
@@ -180,4 +194,3 @@ if st.button("Chief Hank에게 전달하기"):
 # Footer
 st.markdown("---")
 st.caption("© 2024 Southern Industrial Solutions | Focused on Quality & Safety")
-
